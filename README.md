@@ -1,6 +1,7 @@
 # Enefit-Energy-Prediction-Competition
 
 Joosep Hook, Kea Kohv
+
 UT Transformers course 2023/2024
 
 This project investigates the application of timeseries transformers to forecasting the energy behavior of prosumers. Prosumers are individuals who both consume and produce energy, in this
