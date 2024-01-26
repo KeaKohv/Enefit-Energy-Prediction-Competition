@@ -339,23 +339,6 @@ freq = "H"
 time_features = time_features_from_frequency_str(freq)  # ? from the tutorial
 lags_sequence = get_lags_for_frequency(freq) # list of integers for some goddamn lag features
 
-config = TimeSeriesTransformerConfig(
-    prediction_length=prediction_length,
-    context_length=context_length,
-    lags_sequence=lags_sequence,
-    # we'll add 2 time features ("month of year" and "age", see further):
-    num_time_features=len(time_features) + 1,
-    num_dynamic_real_features=num_dynamic_real_features,
-    num_static_categorical_features=num_static_categorical_features,
-    cardinality=cardinality,
-    embedding_dimension=embedding_dimension,
-    # transformer params:
-    encoder_layers=4,
-    decoder_layers=4,
-    d_model=32,
-    distribution_output="student_t",
-)
-
 train = []
 validation = []
 test = []
@@ -395,8 +378,12 @@ for (is_business, product_type, county, is_consumption), grp in df_train.groupby
     )
     item_id += 1
 
-    for i in range(48):
-        test_sample = test_grp.iloc[i+48:i+48+context_length+prediction_length]
+    point_size = context_length + prediction_length + 1
+
+    for i in range(240):
+        test_sample = test_grp.iloc[-point_size-i:len(test_grp)-i]
+        assert len(test_sample) > 0
+        assert test_sample['datetime'].isnull().values.sum() == 0
         test.append(
             dict(
                 start=test_sample['datetime'].min().to_pydatetime(),
@@ -422,15 +409,8 @@ test_dataset = my_dataset["test"]
 train_dataset.set_transform(partial(transform_start_field, freq=freq))
 test_dataset.set_transform(partial(transform_start_field, freq=freq))
 
-model = TimeSeriesTransformerForPrediction(config)
-
-train_dataloader = create_train_dataloader(
-    config=config,
-    freq=freq,
-    data=train_dataset,
-    batch_size=32,
-    num_batches_per_epoch=2000,
-)
+model = TimeSeriesTransformerForPrediction.from_pretrained('./vanilla_transformer/')
+config = TimeSeriesTransformerConfig.from_json_file('./vanilla_transformer/config.json')
 
 test_dataloader = create_backtest_dataloader(
     config=config,
@@ -443,44 +423,6 @@ accelerator = Accelerator()
 device = accelerator.device
 
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.95), weight_decay=1e-6)
-
-model, optimizer, train_dataloader = accelerator.prepare(
-    model,
-    optimizer,
-    train_dataloader,
-)
-
-model.train()
-for epoch in range(40):
-    losses = []
-    for idx, batch in enumerate(train_dataloader):
-        optimizer.zero_grad()
-        outputs = model(
-            static_categorical_features=batch["static_categorical_features"].to(device)
-            if config.num_static_categorical_features > 0
-            else None,
-            static_real_features=batch["static_real_features"].to(device)
-            if config.num_static_real_features > 0
-            else None,
-            past_time_features=batch["past_time_features"].to(device),
-            past_values=batch["past_values"].to(device),
-            future_time_features=batch["future_time_features"].to(device),
-            future_values=batch["future_values"].to(device),
-            past_observed_mask=batch["past_observed_mask"].to(device),
-            future_observed_mask=batch["future_observed_mask"].to(device),
-        )
-        loss = outputs.loss
-        losses.append(loss.item())
-
-        # Backpropagation
-        accelerator.backward(loss)
-        optimizer.step()
-
-    print(f'{epoch=} {np.mean(losses)=}')
-
-model.save_pretrained( save_directory='./vanilla_transformer')
-
 model.eval()
 
 forecasts = []
